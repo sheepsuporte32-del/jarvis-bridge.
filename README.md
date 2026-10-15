@@ -1,63 +1,49 @@
-# JARVIS Bridge — pacote de implantação 1.0
+# JARVIS Bridge — Android app-launch integration 1.1
 
-## Estado real
-Este pacote é código pronto para implantação, mas não está publicado nem ligado ao celular: isso depende de um host HTTPS, do webhook privado criado no MacroDroid e da autorização da conta Alexa/AWS. Não envie senhas ou URLs secretas no chat.
+## What is implemented
+- FastAPI service protected by a Bearer API key.
+- Fixed allowlist of app-launch actions: WhatsApp Business, Camera, Instagram, Gmail and Android Settings.
+- Each action maps to a private MacroDroid webhook stored only in Render environment variables; callers cannot submit arbitrary URLs.
+- SQLite request-ID deduplication to prevent accidental repeated dispatches.
+- `/health` reports configured action identifiers, never webhook values.
+- `openapi.yaml` describes the current ChatGPT Action contract.
 
-## Componentes
-- API FastAPI autenticada por Bearer token.
-- Lista de ações fechada: somente `open_whatsapp`.
-- URL do webhook guardada em variável de ambiente do servidor.
-- Proteção contra repetição por `request_id` usando SQLite.
-- `openapi.yaml` para configurar uma GPT Action.
-- Base de skill Alexa pt-BR em `alexa_skill/` (não publicar o handler demonstrativo sem validar assinatura/application ID).
-- Testes automatizados básicos em `tests/`.
+## Important deployment status
+Code changes to the connected GitHub `main` branch trigger Render's configured auto-deploy. The server can only execute actions whose webhook environment variables are configured. The existing WhatsApp webhook setting is preserved. Four additional MacroDroid webhooks must be created on the phone and configured in Render before those actions work end-to-end.
 
-## Preparar MacroDroid no Galaxy
-Crie uma macro chamada `JARVIS - Abrir WhatsApp`:
-- Gatilho: webhook/HTTP trigger do MacroDroid, conforme a versão instalada.
-- Ação: Aplicativos → Iniciar aplicativo → WhatsApp.
-- Gere e copie a URL privada do webhook. Coloque-a apenas no segredo `MACRODROID_OPEN_WHATSAPP_URL` do servidor; nunca na especificação OpenAPI, instruções do GPT ou repositório.
-- Confirme que o Android permite que o MacroDroid funcione em segundo plano e não está sendo encerrado pela otimização de bateria.
-
-## Variáveis do servidor
-Configure no host:
-- `JARVIS_API_KEY`: segredo aleatório longo (32 bytes ou mais), diferente de qualquer senha pessoal.
-- `MACRODROID_OPEN_WHATSAPP_URL`: URL privada do webhook acima.
-- `JARVIS_IDEMPOTENCY_DB`: caminho persistente, por exemplo `/data/jarvis.sqlite3` (use volume persistente e uma única instância/worker; a deduplicação SQLite local não é compartilhada entre réplicas).
+## Render environment variables
+Keep these values private; do not commit them or paste them into chat:
+- `JARVIS_API_KEY`: long random secret (32 bytes or more).
+- `MACRODROID_OPEN_WHATSAPP_URL`: existing private WhatsApp webhook (preserve).
+- `MACRODROID_OPEN_CAMERA_URL`: private Camera-launch webhook.
+- `MACRODROID_OPEN_INSTAGRAM_URL`: private Instagram-launch webhook.
+- `MACRODROID_OPEN_GMAIL_URL`: private Gmail-launch webhook.
+- `MACRODROID_OPEN_SETTINGS_URL`: private Android Settings-launch webhook.
 - `REQUEST_TIMEOUT_SECONDS=8`.
+- `JARVIS_IDEMPOTENCY_DB=/data/jarvis.sqlite3` on a persistent disk.
 
-## Executar localmente
-Python 3.11+:
-```bash
-python -m venv .venv
-# Windows: .venv\\Scripts\\activate
-# Linux/macOS: source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app:app --host 127.0.0.1 --port 8000
-```
-Localhost não pode ser chamado pelo GPT na internet; para uma GPT Action, implante atrás de HTTPS. Não exponha o servidor sem token.
+The four new webhook variables are intentionally not populated automatically: they must be generated in MacroDroid on the phone. Never reuse the WhatsApp webhook for a different action; it triggers the WhatsApp macro.
 
-## Docker
-O Dockerfile está incluído. Configure segredos por variáveis no host e monte volume persistente em `/data`. Não inclua `.env` no Git.
+## MacroDroid setup on the Samsung phone
+Create one separate macro for each new action:
+1. Name it clearly, e.g. `JARVIS - Abrir Câmera`.
+2. Use a private MacroDroid HTTP/webhook trigger supported by the installed version.
+3. Add action: Applications → Launch Application → select the target app. For Settings, choose the Android Settings app.
+4. Copy that macro's unique webhook URL into the matching Render environment variable above.
+5. Test each webhook directly from MacroDroid before connecting it to the API.
+6. Keep MacroDroid's background/battery permissions configured so macros can run reliably.
 
-## GPT Action
-1. Implante a API num host HTTPS e substitua o endereço em `openapi.yaml`.
-2. No editor de GPT, adicione uma Action importando `openapi.yaml`.
-3. Configure autenticação API Key/Bearer com o mesmo `JARVIS_API_KEY` do servidor.
-4. Instrua o GPT a obter confirmação explícita antes de acionar qualquer ação real. Teste primeiro `/health`, depois `open_whatsapp`.
+Do not expose webhook URLs in OpenAPI, prompts, public repositories or screenshots.
 
-## Testes
-```bash
-pip install -r requirements.txt pytest
-pytest -q
-```
+## API contract
+POST `/v1/actions/execute`, authenticated with `Authorization: Bearer <JARVIS_API_KEY>`.
+Body example: `{"action":"open_camera","request_id":"unique-id-123"}`.
+Allowed actions: `open_whatsapp`, `open_camera`, `open_instagram`, `open_gmail`, `open_settings`.
+A request ID must be unique per new command. Reusing it will not dispatch another action. Legacy clients may still send `confirmation: true`.
 
-## Limitações e segurança
-- Uma resposta HTTP bem-sucedida significa que o webhook respondeu, não prova visualmente que o WhatsApp abriu.
-- Não aceita URLs arbitrárias, comandos de shell ou ações fora da lista permitida.
-- A base Alexa é apenas demonstrativa até validar assinatura da Alexa e application ID com o SDK oficial.
-- Para ações futuras (mensagens, chamadas, compras, exclusão de dados), exija confirmação específica; não as adicione à lista sem revisão.
-- A ponte não consegue criar o webhook no seu aparelho, autenticar-se em contas externas ou publicar a skill sem a sua autorização.
+## Validation
+Run `pip install -r requirements.txt && pytest -q`.
+A successful API/webhook response proves only that MacroDroid's webhook responded; it does not prove visually that Android opened the app. End-to-end validation requires a real phone and the private webhooks.
 
-## Implantação com Render (Blueprint incluído)
-O arquivo `render.yaml` descreve um serviço Docker HTTPS com health check e disco persistente. Para a implantação automática, o código precisa estar em um repositório GitHub que você autorize o Render a acessar. O Render pedirá os dois segredos (`JARVIS_API_KEY` e `MACRODROID_OPEN_WHATSAPP_URL`) no painel; não os grave no repositório. O plano com disco persistente pode gerar cobrança.
+## Security boundaries
+This bridge is for launching apps only. It does not read messages, send messages, access Gmail content, take photos, change system settings, make purchases, delete data, or bypass Android permissions. Those capabilities require separate scoped integrations and appropriate authorization.
