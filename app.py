@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Literal
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 app = FastAPI(
@@ -15,6 +16,7 @@ app = FastAPI(
     description="Authenticated, allowlisted bridge from ChatGPT Actions or an Alexa skill to approved MacroDroid webhooks.",
 )
 JARVIS_API_KEY = os.getenv("JARVIS_API_KEY", "")
+bearer_scheme = HTTPBearer(auto_error=False)
 OPEN_WHATSAPP_URL = os.getenv("MACRODROID_OPEN_WHATSAPP_URL", "")
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "8"))
 IDEMPOTENCY_DB = os.getenv("JARVIS_IDEMPOTENCY_DB", "/data/jarvis.sqlite3")
@@ -42,12 +44,12 @@ def db_connection():
     finally:
         conn.close()
 
-def authorize(authorization: str | None) -> None:
+def authorize(credentials: HTTPAuthorizationCredentials | None) -> None:
     if not JARVIS_API_KEY:
         raise HTTPException(status_code=503, detail="Server not configured: JARVIS_API_KEY is missing.")
-    if not authorization or not authorization.startswith("Bearer "):
+    if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Missing bearer token.")
-    supplied = authorization.removeprefix("Bearer ").strip()
+    supplied = credentials.credentials.strip()
     if not secrets.compare_digest(supplied, JARVIS_API_KEY):
         raise HTTPException(status_code=401, detail="Invalid bearer token.")
 
@@ -60,8 +62,8 @@ async def health():
     return {"status": "ok", "service": "jarvis-bridge", "version": "1.0.0"}
 
 @app.post("/v1/actions/execute", response_model=ActionResult)
-async def execute_action(payload: ActionRequest, authorization: str | None = Header(default=None)):
-    authorize(authorization)
+async def execute_action(payload: ActionRequest, credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme)):
+    authorize(credentials)
     if not payload.confirmation:
         raise HTTPException(status_code=403, detail="Explicit confirmation is required.")
     if not OPEN_WHATSAPP_URL:
