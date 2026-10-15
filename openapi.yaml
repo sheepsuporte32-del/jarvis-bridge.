@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   description: Executes only allowlisted phone actions through a private MacroDroid webhook.
 servers:
-  - url: https://REPLACE-WITH-YOUR-DEPLOYED-HOST
+  - url: https://jarvis-bridge-o305.onrender.com
 paths:
   /health:
     get:
