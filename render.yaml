@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: jarvis-bridge
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: JARVIS_API_KEY
+        sync: false
+      - key: MACRODROID_OPEN_WHATSAPP_URL
+        sync: false
+      - key: REQUEST_TIMEOUT_SECONDS
+        value: "8"
+      - key: JARVIS_IDEMPOTENCY_DB
+        value: /data/jarvis.sqlite3
+    disk:
+      name: jarvis-data
+      mountPath: /data
+      sizeGB: 1
