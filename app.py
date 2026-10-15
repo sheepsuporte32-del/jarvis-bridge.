@@ -51,6 +51,10 @@ def authorize(authorization: str | None) -> None:
     if not secrets.compare_digest(supplied, JARVIS_API_KEY):
         raise HTTPException(status_code=401, detail="Invalid bearer token.")
 
+@app.api_route("/", methods=["GET", "HEAD"])
+async def root():
+    return {"status": "ok", "service": "jarvis-bridge", "health": "/health"}
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "jarvis-bridge", "version": "1.0.0"}
