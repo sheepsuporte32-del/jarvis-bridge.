@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: JARVIS Bridge
-  version: 1.0.0
-  description: Executes only allowlisted phone actions through a private MacroDroid webhook.
+  version: 1.1.0
+  description: Authenticated allowlisted Android app launches through private MacroDroid webhooks.
 servers:
   - url: https://jarvis-bridge-o305.onrender.com
 paths:
@@ -13,12 +13,15 @@ paths:
       security: []
       responses:
         '200':
-          description: Service status
+          description: Service status and configured action identifiers (no secrets)
   /v1/actions/execute:
     post:
       operationId: executeApprovedPhoneAction
-      summary: Execute an explicitly approved phone action
-      description: Only open_whatsapp is supported. Obtain explicit user confirmation in the conversation before calling.
+      summary: Execute a pre-authorized Android app launch
+      description: >-
+        Executes only the fixed action allowlist. Owner pre-authorizes these app-launch
+        actions; do not use this endpoint for messages, purchases, deletion, permission
+        changes, or arbitrary URLs. Generate a unique request_id for each new command.
       security:
         - BearerAuth: []
       requestBody:
@@ -28,17 +31,27 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [action, confirmation, request_id]
+              required: [action, request_id]
               properties:
-                action: {type: string, enum: [open_whatsapp]}
-                confirmation: {type: boolean, enum: [true]}
-                request_id: {type: string, minLength: 1, maxLength: 100, pattern: '^[A-Za-z0-9._:-]+$'}
+                action:
+                  type: string
+                  enum: [open_whatsapp, open_camera, open_instagram, open_gmail, open_settings]
+                confirmation:
+                  type: boolean
+                  enum: [true]
+                  description: Optional legacy field; accepted for backward compatibility.
+                request_id:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                  pattern: '^[A-Za-z0-9._:-]+$'
       responses:
-        '200': {description: Request sent or duplicate request safely ignored}
+        '200': {description: Request sent or duplicate safely ignored}
         '401': {description: Unauthorized}
-        '403': {description: Confirmation missing}
+        '409': {description: Request ID reused for a different action}
+        '422': {description: Invalid or unallowlisted action}
         '502': {description: MacroDroid webhook failed}
-        '503': {description: Integration or storage not configured}
+        '503': {description: Action webhook or storage not configured}
         '504': {description: MacroDroid timed out}
 components:
   securitySchemes:
