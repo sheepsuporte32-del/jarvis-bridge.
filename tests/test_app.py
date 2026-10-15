@@ -2,7 +2,6 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 _tmp = tempfile.NamedTemporaryFile(delete=False)
@@ -17,8 +16,23 @@ os.environ["JARVIS_IDEMPOTENCY_DB"] = _tmp.name
 
 import app
 from fastapi.testclient import TestClient
-client = TestClient(app.app)
 AUTH = {"Authorization": "Bearer test-secret-key"}
+client = TestClient(app.app)
+
+class FakeResponse:
+    def raise_for_status(self):
+        return None
+
+class FakeAsyncClient:
+    def __init__(self, *args, **kwargs):
+        pass
+    async def __aenter__(self):
+        return self
+    async def __aexit__(self, *args):
+        return False
+    async def get(self, url):
+        assert url.startswith("https://example.invalid/")
+        return FakeResponse()
 
 def test_health_reports_actions_without_secrets():
     r = client.get("/health")
@@ -44,11 +58,29 @@ def test_missing_webhook_is_503(monkeypatch):
                     json={"action":"open_camera","request_id":"missing-hook"})
     assert r.status_code == 503
 
-def test_request_id_cannot_be_reused_for_different_action():
+def test_each_allowed_action_routes_to_its_private_webhook(monkeypatch):
+    monkeypatch.setattr(app.httpx, "AsyncClient", FakeAsyncClient)
+    for action in ("open_whatsapp", "open_camera", "open_instagram", "open_gmail", "open_settings"):
+        r = client.post("/v1/actions/execute", headers=AUTH,
+                        json={"action": action, "request_id": f"route-{action}"})
+        assert r.status_code == 200, r.text
+        assert r.json()["action"] == action
+        assert r.json()["status"] == "request_sent"
+
+def test_duplicate_request_is_not_dispatched_twice(monkeypatch):
+    monkeypatch.setattr(app.httpx, "AsyncClient", FakeAsyncClient)
+    body = {"action": "open_whatsapp", "request_id": "duplicate-test"}
+    first = client.post("/v1/actions/execute", headers=AUTH, json=body)
+    second = client.post("/v1/actions/execute", headers=AUTH, json=body)
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["status"] == "already_processed"
+
+def test_request_id_cannot_be_reused_for_different_action(monkeypatch):
+    monkeypatch.setattr(app.httpx, "AsyncClient", FakeAsyncClient)
     first = client.post("/v1/actions/execute", headers=AUTH,
                         json={"action":"open_whatsapp","request_id":"same-id"})
-    # This test only checks conflict if first call can be sent; network is intentionally invalid,
-    # so the request is reserved before it fails. Reuse must still not dispatch a second action.
     second = client.post("/v1/actions/execute", headers=AUTH,
                          json={"action":"open_camera","request_id":"same-id"})
+    assert first.status_code == 200
     assert second.status_code == 409
